@@ -1,0 +1,45 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: "jdbc:mysql://localhost:3306/capstone"
+    username: capstone
+    password: MyCapstonePassword
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+  kafka:
+    bootstrap-servers: "localhost:9092"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: "tool-scheduler-group"
+      auto-offset-reset: "earliest"
+    admin:
+      properties:
+        bootstrap.servers: "localhost:9092"
+
+kafka:
+  topics:
+    repo-schedule-topic: "repo-schedule-topic"
+    partition-count: 1
+    replication-factor: 1
+    parser-topic: "parser-topic"
+
+myapp:
+  local-storage: "/Users/ishaan.chadha/Desktop/scan"
+
+logging:
+  level:
+    root: INFO
+
+    # Set log levels as needed
+
+# Example: If you need a placeholder for GitHub PATs or other secrets,
+# prefer environment variables or a secure secrets store over storing them in plain text here.
