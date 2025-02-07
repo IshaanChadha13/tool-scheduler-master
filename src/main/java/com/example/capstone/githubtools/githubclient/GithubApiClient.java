@@ -22,7 +22,7 @@ public class GithubApiClient {
     }
 
     public List<Map<String, Object>> fetchCodeScanningAlerts(String owner, String repo, String pat) {
-        String url = String.format("https://api.github.com/repos/%s/%s/code-scanning/alerts?state=all&per_page=100",
+        String url = String.format("https://api.github.com/repos/%s/%s/code-scanning/alerts?per_page=100",
                 owner, repo);
         HttpHeaders headers = createGithubHeaders(pat);
         ResponseEntity<List<Map<String, Object>>> response = restTemplate.exchange(
@@ -35,7 +35,7 @@ public class GithubApiClient {
     }
 
     public List<Map<String, Object>> fetchDependabotAlerts(String owner, String repo, String pat) {
-        String url = String.format("https://api.github.com/repos/%s/%s/dependabot/alerts?per_page=100&state=open",
+        String url = String.format("https://api.github.com/repos/%s/%s/dependabot/alerts?per_page=100",
                 owner, repo);
         HttpHeaders headers = createGithubHeaders(pat);
         ResponseEntity<List<Map<String, Object>>> response = restTemplate.exchange(
@@ -48,7 +48,7 @@ public class GithubApiClient {
     }
 
     public List<Map<String, Object>> fetchSecretScanningAlerts(String owner, String repo, String pat) {
-        String url = String.format("https://api.github.com/repos/%s/%s/secret-scanning/alerts?per_page=100&state=open",
+        String url = String.format("https://api.github.com/repos/%s/%s/secret-scanning/alerts?per_page=100",
                 owner, repo);
         HttpHeaders headers = createGithubHeaders(pat);
         ResponseEntity<List<Map<String, Object>>> response = restTemplate.exchange(
