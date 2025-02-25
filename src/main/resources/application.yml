@@ -27,10 +27,14 @@ spring:
 
 kafka:
   topics:
-    repo-schedule-topic: "repo-schedule-topic"
+#    repo-schedule-topic: "repo-schedule-topic"
+    scan-pull-topic: "scan-pull-topic"
     partition-count: 1
     replication-factor: 1
-    parser-topic: "parser-topic"
+    scan-parse-topic: "scan-parse-topic"
+    jfc-jobs: "jfc-jobs"
+    job-acknowledgement-topic: "job-acknowledgement-topic"
+#    parser-topic: "parser-topic"
 
 myapp:
   local-storage: "/Users/ishaan.chadha/Desktop/scan"

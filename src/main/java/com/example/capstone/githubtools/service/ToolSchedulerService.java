@@ -1,7 +1,11 @@
 package com.example.capstone.githubtools.service;
 
+import com.example.capstone.githubtools.dto.ParserMessageEvent;
 import com.example.capstone.githubtools.githubclient.GithubApiClient;
-import com.example.capstone.githubtools.repository.RepoTokenMappingRepository;
+import com.example.capstone.githubtools.model.ParserMessage;
+import com.example.capstone.githubtools.model.TenantEntity;
+import com.example.capstone.githubtools.producer.AcknowledgementProducer;
+import com.example.capstone.githubtools.repository.TenantRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -12,101 +16,144 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 @Service
 public class ToolSchedulerService {
 
-    private final RepoTokenMappingRepository tokenMappingRepo;
+    private final TenantRepository tenantRepository;
     private final GithubApiClient githubApiClient;
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AcknowledgementProducer acknowledgementProducer; // New field
 
-    @Value("${kafka.topics.parser-topic}")
-    private String parserTopic;
+
+//    @Value("${kafka.topics.scan-pull-topic}")
+//    private String filePathTopic;
+
+//    @Value("${kafka.topics.scan-parse-topic}")
+//    private String scanParseTopic;
+
+    @Value("${kafka.topics.jfc-jobs}")
+    private String jfcJobsTopic;
 
     @Value("${myapp.local-storage}")
     private String localStoragePath;
 
     public ToolSchedulerService(
-            RepoTokenMappingRepository tokenMappingRepo,
+            TenantRepository tenantRepository,
             GithubApiClient githubApiClient,
-            KafkaTemplate<String, String> kafkaTemplate
+            KafkaTemplate<String, String> kafkaTemplate,
+            AcknowledgementProducer acknowledgementProducer
     ) {
-        this.tokenMappingRepo = tokenMappingRepo;
+        this.tenantRepository = tenantRepository;
         this.githubApiClient = githubApiClient;
         this.kafkaTemplate = kafkaTemplate;
+        this.acknowledgementProducer = acknowledgementProducer;
+
     }
 
-    public void processRepository(String owner, String repo, List<String> tools) {
-        // 1) Fetch the token from DB
-        var mappingOpt = tokenMappingRepo.findByOwnerAndRepository(owner, repo);
-        if (mappingOpt.isEmpty()) {
-            System.out.println("No PAT found for " + owner + "/" + repo);
+    /**
+     * Process repository for the given tenant & tool.
+     */
+    public void processRepository(Long tenantId, String tool, String eventId) {
+        // 1) Find TenantEntity from DB
+        TenantEntity tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new IllegalStateException("No tenant found for id=" + tenantId));
+
+        String owner = tenant.getOwner();
+        String repo = tenant.getRepo();
+        String pat  = tenant.getPersonalAccessToken();
+
+        if (owner == null || repo == null || pat == null) {
+            System.out.println("Tenant " + tenantId + " is missing owner/repo/PAT");
             return;
         }
 
-        String pat = mappingOpt.get().getPersonalAccessToken();
-
-        // 2) Create the base directory (owner-repo folder) if not existing
-        String ownerRepoFolder = localStoragePath + File.separator + owner + "-" + repo;
-        File baseDir = new File(ownerRepoFolder);
+        // 2) Create base directory => e.g. "tenant-2_ishaan-juice-shop"
+        String baseFolder = localStoragePath + File.separator
+                + "tenant-" + tenantId + "_" + owner + "-" + repo;
+        File baseDir = new File(baseFolder);
         if (!baseDir.exists()) {
             baseDir.mkdirs();
         }
 
-        // 3) Fetch/store alerts ONLY for selected tools
-        if (tools.contains("CODE_SCANNING")) {
+        // 3) Fetch & store alerts for the selected tool
+        if (Objects.equals(tool, "CODE_SCANNING")) {
             var codeAlerts = githubApiClient.fetchCodeScanningAlerts(owner, repo, pat);
-            writeAndSendToParser(owner, repo, "CODE_SCANNING", codeAlerts);
-        }
-
-        if (tools.contains("DEPENDABOT")) {
+            writeAndSendToParser(tenantId, owner, repo, "CODE_SCANNING", codeAlerts, eventId);
+        } else if (Objects.equals(tool, "DEPENDABOT")) {
             var dependabotAlerts = githubApiClient.fetchDependabotAlerts(owner, repo, pat);
-            writeAndSendToParser(owner, repo, "DEPENDABOT", dependabotAlerts);
-        }
-
-        if (tools.contains("SECRET_SCANNING")) {
+            writeAndSendToParser(tenantId, owner, repo, "DEPENDABOT", dependabotAlerts, eventId);
+        } else if (Objects.equals(tool, "SECRET_SCANNING")) {
             var secretAlerts = githubApiClient.fetchSecretScanningAlerts(owner, repo, pat);
-            writeAndSendToParser(owner, repo, "SECRET_SCANNING", secretAlerts);
-        }
-
-        // If the user didn't choose any tools, do nothing (or log it)
-        if (tools.isEmpty()) {
-            System.out.println("No tools were selected for " + owner + "/" + repo);
+            writeAndSendToParser(tenantId, owner, repo, "SECRET_SCANNING", secretAlerts, eventId);
         }
     }
 
-    private void writeAndSendToParser(String owner, String repo, String toolType,
-                                      List<Map<String,Object>> alerts) {
-        // subfolder => e.g. "/tmp/alerts/IshaanChadha13-juice-shop/CODE_SCANNING"
+    /**
+     * Write alerts to a JSON file, then publish a ParserMessageEvent with {tenantId, filePath} to parser-topic.
+     */
+    private void writeAndSendToParser(Long tenantId, String owner, String repo,
+                                      String toolType, List<Map<String,Object>> alerts,String eventId) {
+
+        // e.g. "/tmp/alerts/tenant-2_ishaan-juice-shop/CODE_SCANNING"
         String subFolderPath = localStoragePath
-                + File.separator + owner + "-" + repo
+                + File.separator + "tenant-" + tenantId + "_" + owner + "-" + repo
                 + File.separator + toolType;
+
         File subFolder = new File(subFolderPath);
         if (!subFolder.exists()) {
             subFolder.mkdirs();
         }
 
-        // file name => e.g. "IshaanChadha13-juice-shop-CODE_SCANNING-<timestamp>.json"
-        String fileName = owner + "-" + repo + "-" + toolType
-                + "-" + System.currentTimeMillis() + ".json";
-        File outFile = new File(subFolder, fileName);
+        // e.g. "tenant-2_ishaan-juice-shop-CODE_SCANNING-<timestamp>.json"
+        String fileName = "tenant-" + tenantId + "_" + owner + "-" + repo
+                + "-" + toolType + "-" + System.currentTimeMillis() + ".json";
 
-        // Write the alerts to that file
+        File outFile = new File(subFolder, fileName);
         writeToJsonFile(alerts, outFile);
 
-        // Publish the file path to parser topic
-        String filePath = outFile.getAbsolutePath();
-        kafkaTemplate.send(parserTopic, filePath);
-        System.out.println("Saved " + toolType + " alerts to: " + filePath);
+        // Create ParserMessage
+        ParserMessage parserMessage = new ParserMessage(tenantId, outFile.getAbsolutePath(), toolType);
+
+        // Wrap it into ParserMessageEvent
+        String parseEventId = UUID.randomUUID().toString();  // a new unique ID
+
+        ParserMessageEvent parserMessageEvent = new ParserMessageEvent(parserMessage, parseEventId, "jfc-parser-topic");
+
+        try {
+            Thread.sleep(10000);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+
+        try {
+            // Convert the event to JSON
+            String json = objectMapper.writeValueAsString(parserMessageEvent);
+
+            // Publish to Kafka
+            kafkaTemplate.send(jfcJobsTopic, json);
+
+            System.out.printf(
+                    "Saved %s alerts to %s. Produced ParserMessageEvent => %s%n",
+                    toolType, outFile.getAbsolutePath(), json
+            );
+
+            acknowledgementProducer.sendScanAcknowledgement(eventId, true);
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            acknowledgementProducer.sendScanAcknowledgement(eventId, false);
+        }
     }
 
     private void writeToJsonFile(Object data, File file) {
-        ObjectMapper mapper = new ObjectMapper();
         try (FileWriter fw = new FileWriter(file)) {
-            mapper.writeValue(fw, data);
+            objectMapper.writeValue(fw, data);
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
-
 }
