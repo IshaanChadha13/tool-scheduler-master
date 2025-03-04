@@ -28,13 +28,6 @@ public class ToolSchedulerService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AcknowledgementProducer acknowledgementProducer; // New field
 
-
-//    @Value("${kafka.topics.scan-pull-topic}")
-//    private String filePathTopic;
-
-//    @Value("${kafka.topics.scan-parse-topic}")
-//    private String scanParseTopic;
-
     @Value("${kafka.topics.jfc-jobs}")
     private String jfcJobsTopic;
 
@@ -124,7 +117,7 @@ public class ToolSchedulerService {
         ParserMessageEvent parserMessageEvent = new ParserMessageEvent(parserMessage, parseEventId, "jfc-parser-topic");
 
         try {
-            Thread.sleep(10000);
+            Thread.sleep(2000);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
         }
